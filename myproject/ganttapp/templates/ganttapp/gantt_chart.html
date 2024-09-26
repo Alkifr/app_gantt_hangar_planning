@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gantt Chart</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/twproject-gantt@6.4.0/css/gantt.css" />
+</head>
+<body>
+    <div id="gantt_here" style="width:100%; height:600px;"></div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/twproject-gantt@6.4.0/js/gantt.js"></script>
+    <script>
+        const tasks = {
+            data: [
+                {% for event in events %}
+                {
+                    id: {{ event.id }},
+                    text: "{{ event.title }}",
+                    start_date: "{{ event.start_date|date:'d-m-Y H:i' }}",
+                    duration: {{ event.end_date|timesince:event.start_date|slice:":1" }},
+                    progress: 0.6,  // Можно сделать динамическим
+                    status: "{{ event.status }}",
+                    group: "{{ event.group.name }}",
+                },
+                {% endfor %}
+            ],
+            links: []
+        };
+
+        gantt.init("gantt_here");
+        gantt.parse(tasks);
+
+        // Настройки цветовой схемы на основе статуса
+        gantt.templates.task_class = function (start, end, task) {
+            if (task.status === 'pending') return 'gantt-task-pending';
+            if (task.status === 'in_progress') return 'gantt-task-in-progress';
+            if (task.status === 'completed') return 'gantt-task-completed';
+        };
+    </script>
+
+    <style>
+        .gantt-task-pending {
+            background-color: lightgray !important;
+        }
+        .gantt-task-in-progress {
+            background-color: lightblue !important;
+        }
+        .gantt-task-completed {
+            background-color: lightgreen !important;
+        }
+    </style>
+</body>
+</html>
