@@ -3,52 +3,461 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gantt Chart</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/twproject-gantt@6.4.0/css/gantt.css" />
-</head>
-<body>
-    <div id="gantt_here" style="width:100%; height:600px;"></div>
-    
-    <script src="https://cdn.jsdelivr.net/npm/twproject-gantt@6.4.0/js/gantt.js"></script>
-    <script>
-        const tasks = {
-            data: [
-                {% for event in events %}
-                {
-                    id: {{ event.id }},
-                    text: "{{ event.title }}",
-                    start_date: "{{ event.start_date|date:'d-m-Y H:i' }}",
-                    duration: {{ event.end_date|timesince:event.start_date|slice:":1" }},
-                    progress: 0.6,  // Можно сделать динамическим
-                    status: "{{ event.status }}",
-                    group: "{{ event.group.name }}",
-                },
-                {% endfor %}
-            ],
-            links: []
-        };
-
-        gantt.init("gantt_here");
-        gantt.parse(tasks);
-
-        // Настройки цветовой схемы на основе статуса
-        gantt.templates.task_class = function (start, end, task) {
-            if (task.status === 'pending') return 'gantt-task-pending';
-            if (task.status === 'in_progress') return 'gantt-task-in-progress';
-            if (task.status === 'completed') return 'gantt-task-completed';
-        };
-    </script>
-
+    <title>Gantt Chart with Google Charts</title>
+    <!-- Подключение Google Charts -->
+    <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
+    <!-- Подключение jQuery -->
+    <script type="text/javascript" src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <style>
-        .gantt-task-pending {
-            background-color: lightgray !important;
+        body {
+            font-family: Arial, sans-serif;
         }
-        .gantt-task-in-progress {
-            background-color: lightblue !important;
+        #controls {
+            display: flex;
+            align-items: center;
+            margin-bottom: 20px;
         }
-        .gantt-task-completed {
-            background-color: lightgreen !important;
+        #zoom-select {
+            margin-right: 20px;
+        }
+        .add-event-btn {
+            font-size: 24px;
+            cursor: pointer;
+            color: green;
+            padding: 5px 10px;
+            border: none;
+            background: none;
+        }
+        /* Стили для модального окна */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 2;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0, 0, 0, 0.4); /* Полупрозрачный черный фон */
+        }
+
+        .modal-content {
+            background-color: #fefefe;
+            margin: 10% auto; /* Располагаем блок по центру экрана */
+            padding: 20px;
+            border: 1px solid #888;
+            width: 400px; /* Ширина модального окна */
+            box-shadow: 0px 5px 15px rgba(0,0,0,0.5);
+            border-radius: 5px;
+        }
+
+        .close {
+            color: #aaa;
+            float: right;
+            font-size: 24px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .close:hover,
+        .close:focus {
+            color: black;
+            text-decoration: none;
+        }
+
+        /* Стили для контекстного меню */
+        .context-menu {
+            position: absolute;
+            display: none;
+            background-color: white;
+            border: 1px solid #ccc;
+            z-index: 100;
+            box-shadow: 2px 2px 5px rgba(0,0,0,0.3);
+        }
+
+        .context-menu ul {
+            list-style-type: none;
+            margin: 0;
+            padding: 5px 0;
+        }
+
+        .context-menu ul li {
+            padding: 8px 12px;
+            cursor: pointer;
+        }
+
+        .context-menu ul li:hover {
+            background-color: #f0f0f0;
+        }
+
+        /* Стили для кнопки добавления события */
+        .add-event-btn {
+            font-size: 24px;
+            cursor: pointer;
+            color: green;
+            padding: 5px 10px;
+            border: none;
+            background: none;
+        }
+
+        /* Стили для zoom dropdown */
+        #zoom-select {
+            padding: 5px;
+            font-size: 16px;
         }
     </style>
+    <script type="text/javascript">
+        // Загрузка Google Charts
+        google.charts.load('current', {'packages':['gantt']});
+        google.charts.setOnLoadCallback(function() {
+            drawChart('days'); // По умолчанию отображаем по дням
+        });
+
+        let ganttData = null;
+        let chart = null;
+        let options = null;
+        let selectedEventId = null;
+
+        function drawChart(scale) {
+            ganttData = new google.visualization.DataTable();
+            ganttData.addColumn('string', 'Task ID');
+            ganttData.addColumn('string', 'Task Name');
+            ganttData.addColumn('string', 'Resource');
+            ganttData.addColumn('date', 'Start Date');
+            ganttData.addColumn('date', 'End Date');
+            ganttData.addColumn('number', 'Duration');
+            ganttData.addColumn('number', 'Percent Complete');
+            ganttData.addColumn('string', 'Dependencies');
+
+            // Заполнение данных из Django
+            ganttData.addRows([
+                {% for event in events %}
+                [
+                    String('{{ event.id }}'), // Превращаем ID в строку
+                    '{{ event.title|escapejs }}',
+                    '{{ event.group.name|default:"No Group" }}',
+                    new Date("{{ event.start_date|date:'Y-m-d\\TH:i:s' }}"), // Форматирование даты
+                    new Date("{{ event.end_date|date:'Y-m-d\\TH:i:s' }}"),   // Форматирование даты
+                    null,
+                    0,  // Процент выполнения по умолчанию 0
+                    null
+                ],
+                {% endfor %}
+            ]);
+
+            // Настройка временной шкалы на год и управление зумированием баров
+            const now = new Date();
+            const firstDate = new Date(now.getFullYear() - 1, 0, 1);  // Начало года
+            const lastDate = new Date(now.getFullYear() + 1, 11, 31); // Конец года
+
+            let trackHeight = 30; // Размер баров по умолчанию
+            switch (scale) {
+                case 'days':
+                    trackHeight = 30;
+                    break;
+                case 'weeks':
+                    trackHeight = 20;
+                    break;
+                case 'months':
+                    trackHeight = 10;
+                    break;
+            }
+
+            options = {
+                height: 600,
+                gantt: {
+                    trackHeight: trackHeight  // Управляем размером баров в зависимости от масштаба
+                },
+                timeline: {
+                    showRowLabels: true,
+                    showDateLabels: true
+                },
+                hAxis: {
+                    viewWindow: {
+                        min: firstDate,
+                        max: lastDate
+                    }
+                }
+            };
+
+            chart = new google.visualization.Gantt(document.getElementById('gantt_chart'));
+            chart.draw(ganttData, options);
+
+            // Обработчик для выбора строки
+            google.visualization.events.addListener(chart, 'select', function() {
+                const selection = chart.getSelection();
+                if (selection.length > 0) {
+                    const row = selection[0].row;
+                    selectedEventId = ganttData.getValue(row, 0);
+                }
+            });
+        }
+
+        // Функция для обновления диаграммы после добавления нового события
+        function updateChart(newEvent) {
+            if (!newEvent || !newEvent.id || !newEvent.start_date || !newEvent.end_date) {
+                console.error("Некорректные данные для нового события:", newEvent);
+                return;
+            }
+
+            const startDate = new Date(newEvent.start_date);
+            const endDate = new Date(newEvent.end_date);
+
+            if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+                console.error("Некорректные даты:", startDate, endDate);
+                return;
+            }
+
+            ganttData.addRow([
+                String(newEvent.id),  // Превращаем ID в строку
+                newEvent.title,
+                newEvent.group,
+                startDate,            // Преобразуем в объект Date
+                endDate,              // Преобразуем в объект Date
+                null,  // Duration (не используется)
+                0,     // Процент выполнения
+                null   // Dependencies (не используются)
+            ]);
+
+            chart.draw(ganttData, options);
+        }
+
+        $(document).ready(function(){
+            // Отправка формы добавления события через AJAX
+            $('#add-event-form').on('submit', function(event){
+                event.preventDefault();
+                const formData = $(this).serialize();
+                $.ajax({
+                    type: "POST",
+                    url: "{% url 'add_event' %}",
+                    data: formData,
+                    success: function(response) {
+                        const newEvent = {
+                            id: response.id,
+                            title: response.title,
+                            group: response.group,
+                            start_date: response.start_date,
+                            end_date: response.end_date
+                        };
+
+                        updateChart(newEvent);  // Обновляем диаграмму новым событием
+                        $('#add-event-modal').fadeOut();  // Закрываем модальное окно
+                        $('#add-event-form')[0].reset();  // Сбрасываем форму
+                    },
+                    error: function(xhr, errmsg, err) {
+                        console.error("Ошибка добавления события:", errmsg);
+                    }
+                });
+            });
+
+            // Отправка формы редактирования события через AJAX
+            $('#edit-event-form').on('submit', function(event){
+                event.preventDefault();
+                const formData = $(this).serialize();
+
+                $.ajax({
+                    type: "POST",
+                    url: "{% url 'edit_event' %}",
+                    data: formData,
+                    success: function(response) {
+                        // Получаем измененные данные события
+                        const updatedEvent = {
+                            id: response.id,
+                            title: response.title,
+                            group: response.group,
+                            start_date: new Date(response.start_date),
+                            end_date: new Date(response.end_date)
+                        };
+
+                        // Найдем индекс строки, соответствующей измененному событию
+                        const rowIndex = ganttData.getFilteredRows([{column: 0, value: String(updatedEvent.id)}])[0];
+                        
+                        // Обновляем значения в диаграмме
+                        ganttData.setValue(rowIndex, 1, updatedEvent.title);
+                        ganttData.setValue(rowIndex, 2, updatedEvent.group);
+                        ganttData.setValue(rowIndex, 3, updatedEvent.start_date);
+                        ganttData.setValue(rowIndex, 4, updatedEvent.end_date);
+
+                        // Перерисовываем диаграмму
+                        chart.draw(ganttData, options);
+
+                        // Закрываем модальное окно
+                        $('#edit-event-modal').fadeOut();
+                    },
+                    error: function(xhr, errmsg, err) {
+                        console.error("Ошибка редактирования события:", errmsg);
+                    }
+                });
+            });
+
+            // Обработка изменения масштаба через dropdown
+            $('#zoom-select').on('change', function(){
+                const scale = $(this).val();
+                drawChart(scale);
+            });
+
+            // Открытие модального окна при клике на кнопку добавления события
+            $('#add-event-btn').on('click', function(){
+                $('#add-event-modal').fadeIn();
+            });
+
+            // Закрытие модального окна при клике на крестик
+            $('.close').on('click', function(){
+                $(this).closest('.modal').fadeOut();
+            });
+
+            // Закрытие модального окна при клике вне его содержимого
+            $(window).on('click', function(event){
+                if ($(event.target).hasClass('modal')) {
+                    $(event.target).fadeOut();
+                }
+            });
+
+            // Контекстное меню для удаления и редактирования
+            $('#gantt_chart').on('contextmenu', function(e){
+                e.preventDefault();
+                if (selectedEventId) {
+                    $('.context-menu').css({
+                        top: e.pageY + 'px',
+                        left: e.pageX + 'px'
+                    }).show();
+                }
+            });
+
+            // Обработка удаления события через контекстное меню
+            $('#delete-event').on('click', function(){
+                if (selectedEventId) {
+                    if (confirm("Are you sure you want to delete this event?")) {
+                        $.ajax({
+                            type: 'POST',
+                            url: '{% url "delete_event" %}',
+                            data: {
+                                'id': selectedEventId,
+                                'csrfmiddlewaretoken': '{{ csrf_token }}'
+                            },
+                            success: function(response) {
+                                if (response.success) {
+                                    const rowIndex = ganttData.getFilteredRows([{column: 0, value: selectedEventId}])[0];
+                                    ganttData.removeRow(rowIndex);
+                                    chart.draw(ganttData, options);
+                                } else {
+                                    alert('Error: ' + response.error);
+                                }
+                            },
+                            error: function(xhr, errmsg, err) {
+                                alert("Error: " + errmsg);
+                            }
+                        });
+                    }
+                }
+                $('.context-menu').hide();
+            });
+
+            // Обработка редактирования события через контекстное меню
+            $('#edit-event').on('click', function(){
+                if (selectedEventId) {
+                    const row = ganttData.getFilteredRows([{column: 0, value: selectedEventId}])[0];
+                    $('#edit-id').val(ganttData.getValue(row, 0));
+                    $('#edit-title').val(ganttData.getValue(row, 1));
+                    $('#edit-group').val(ganttData.getValue(row, 2));
+                    $('#edit-start_date').val(ganttData.getValue(row, 3).toISOString().slice(0, 16));
+                    $('#edit-end_date').val(ganttData.getValue(row, 4).toISOString().slice(0, 16));
+                    $('#edit-event-modal').fadeIn();
+                }
+            });
+
+            // Скрытие контекстного меню при клике вне его
+            $(document).on('click', function(){
+                $('.context-menu').hide();
+            });
+        });
+    </script>
+</head>
+<body>
+    <h2>Google Charts Gantt Diagram with Zoom, Add, Edit, and Delete</h2>
+
+    <div id="controls" style="display: flex; align-items: center; margin-bottom: 20px;">
+        <!-- Выпадающий список для зумирования слева -->
+        <select id="zoom-select" style="padding: 5px; font-size: 16px;">
+            <option value="days">Days</option>
+            <option value="weeks">Weeks</option>
+            <option value="months">Months</option>
+        </select>
+
+        <!-- Spacer для выравнивания кнопки добавления по правому краю -->
+        <div style="flex-grow: 1;"></div>
+
+        <!-- Кнопка добавления события в формате знака плюс -->
+        <button id="add-event-btn" class="add-event-btn" title="Add Event">+</button>
+    </div>
+
+    <!-- Диаграмма Ганта -->
+    <div id="gantt_chart"></div>
+
+    <!-- Модальное окно для добавления нового события -->
+    <div id="add-event-modal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h3>Add New Event</h3>
+            <form id="add-event-form" method="POST">
+                {% csrf_token %}
+                <label for="title">Title:</label><br>
+                <input type="text" id="title" name="title" required style="width: 100%; padding: 5px;"><br><br>
+
+                <label for="group">Group:</label><br>
+                <select id="group" name="group" required style="width: 100%; padding: 5px;">
+                    {% for group in groups %}
+                    <option value="{{ group.name }}">{{ group.name }}</option>
+                    {% endfor %}
+                </select><br><br>
+
+                <label for="start_date">Start Date:</label><br>
+                <input type="datetime-local" id="start_date" name="start_date" required style="width: 100%; padding: 5px;"><br><br>
+
+                <label for="end_date">End Date:</label><br>
+                <input type="datetime-local" id="end_date" name="end_date" required style="width: 100%; padding: 5px;"><br><br>
+
+                <button type="submit" style="padding: 10px 20px;">Add Event</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Модальное окно для редактирования события -->
+    <div id="edit-event-modal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h3>Edit Event</h3>
+            <form id="edit-event-form" method="POST">
+                {% csrf_token %}
+                <input type="hidden" id="edit-id" name="id">
+
+                <label for="edit-title">Title:</label><br>
+                <input type="text" id="edit-title" name="title" required style="width: 100%; padding: 5px;"><br><br>
+
+                <label for="edit-group">Group:</label><br>
+                <select id="edit-group" name="group" required style="width: 100%; padding: 5px;">
+                    {% for group in groups %}
+                    <option value="{{ group.name }}">{{ group.name }}</option>
+                    {% endfor %}
+                </select><br><br>
+
+                <label for="edit-start_date">Start Date:</label><br>
+                <input type="datetime-local" id="edit-start_date" name="start_date" required style="width: 100%; padding: 5px;"><br><br>
+
+                <label for="edit-end_date">End Date:</label><br>
+                <input type="datetime-local" id="edit-end_date" name="end_date" required style="width: 100%; padding: 5px;"><br><br>
+
+                <button type="submit" style="padding: 10px 20px;">Save Changes</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Контекстное меню для удаления и редактирования события -->
+    <div class="context-menu">
+        <ul>
+            <li id="edit-event">Edit Event</li>
+            <li id="delete-event">Delete Event</li>
+        </ul>
+    </div>
 </body>
 </html>
